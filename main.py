@@ -7,7 +7,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt.chat_agent_executor import AgentState
 
 from langchain_openai import AzureChatOpenAI
-from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.messages import AIMessage, ToolMessage, AIMessageChunk
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.utilities import BingSearchAPIWrapper
 from langchain_core.tools import tool
@@ -55,7 +55,7 @@ def research_assistant(
         return report
     except Exception as e:
         print(f"Error in ResearchAssistant search: {e}")
-        return f"Search failed: {str(e)}"
+        return f"Research assistant failed: {str(e)}"
 
 tools = [search_on_bing, research_assistant]
 checkpointer = MemorySaver()
@@ -69,7 +69,7 @@ llm = AzureChatOpenAI(
     openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
 ).bind_tools(tools)
 
-feed_url = input("Enter RSS feed URL: ")
+feed_url = input("Enter RSS feed URL:")
 articles = fetch_rss_feed(feed_url)
 
 config = {
@@ -82,16 +82,14 @@ graph = create_react_agent(llm, tools, state_modifier=prompt, state_schema=Artic
 
 for article in articles:
     ai_messages = []
-
-    for s in graph.stream({"messages": [], "content": article["content"]}, config, stream_mode="values"):
-        if len(s["messages"]) > 0:
+    for s in graph.stream({"content": article["content"]}, config, stream_mode="values"):
+        if s["messages"]:
             message = s["messages"][-1]
             if isinstance(message, AIMessage):
-                ai_messages.append("AI Message:\n" + extract_message_content(message.content))
-            elif isinstance(message, ToolMessage):
-                ai_messages.append("Tool Message:\n" + message.content)
-            else:
-                ai_messages.append(message)
+                ai_messages.append(f"AI message:\n{extract_message_content(message.content)}")
+            elif isinstance(message, ToolMessage) and message.status == "success" and message.content:
+                ai_messages.append(f"Tool '{message.name}' message:\n{message.content}")
 
-    filename = slugify(article["title"])
-    write_to_file([x for x in ai_messages if x], f"results\\{filename}_{config["configurable"]["thread_id"][:6]}.md")
+    if ai_messages:
+        filename = slugify(article["title"])
+        write_to_file([x for x in ai_messages if x], f"results\\{filename}_{config["configurable"]["thread_id"][:6]}.md")
