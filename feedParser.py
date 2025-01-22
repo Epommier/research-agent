@@ -45,7 +45,7 @@ def extract_message_content(message: str) -> str:
     contemplator = ' '.join([p.get_text() for p in soup.find_all('contemplator')])
     final_answer = ' '.join([p.get_text() for p in soup.find_all('final_answer')])
 
-    if final_answer.length > 0:
-        return contemplator + "\n" + "FINAL ANSWER" + "\n" + final_answer
+    if not final_answer:
+        return f"REFLECTION\n{contemplator}\n"
     else:
-        return contemplator
+        return f"REFLECTION\n{contemplator}\nFINAL ANSWER\n{final_answer}\n"

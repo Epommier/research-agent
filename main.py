@@ -1,4 +1,3 @@
-import getpass
 import os
 import uuid
 import asyncio
@@ -8,9 +7,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.prebuilt.chat_agent_executor import AgentState
 
 from langchain_openai import AzureChatOpenAI
-from langchain_core.messages import HumanMessage, AIMessage
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate
-from langchain_core.output_parsers import StrOutputParser
+from langchain_core.messages import AIMessage, ToolMessage
+from langchain_core.prompts import ChatPromptTemplate
 from langchain_community.utilities import BingSearchAPIWrapper
 from langchain_core.tools import tool
 from langchain.globals import set_verbose
@@ -19,13 +17,8 @@ from langchain.prompts import MessagesPlaceholder
 from typing import Annotated
 from feedParser import fetch_rss_feed, write_to_file, extract_message_content
 from enum import Enum
-
 from gpt_researcher import GPTResearcher
-
 from slugify import slugify
-
-# if not os.environ.get("AZURE_OPENAI_API_KEY"):
-#     os.environ["AZURE_OPENAI_API_KEY"] = getpass.getpass("Enter API key for Azure: ")
 
 class ArticleState(AgentState):
     content: str
@@ -76,40 +69,29 @@ llm = AzureChatOpenAI(
     openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"],
 ).bind_tools(tools)
 
-config = {"configurable": {"thread_id": str(uuid.uuid4())}}
-graph = create_react_agent(llm, tools, state_modifier=prompt, state_schema=ArticleState, checkpointer=checkpointer, debug=True)
+feed_url = input("Enter RSS feed URL: ")
+articles = fetch_rss_feed(feed_url)
 
-articles = fetch_rss_feed("http://www.financemagnates.com/cryptocurrency/feed/")
+config = {
+    "configurable": {
+        "thread_id": str(uuid.uuid4()),        
+        "timeout": None
+    }
+}
+graph = create_react_agent(llm, tools, state_modifier=prompt, state_schema=ArticleState, checkpointer=checkpointer, debug=True)
 
 for article in articles:
     ai_messages = []
+
     for s in graph.stream({"messages": [], "content": article["content"]}, config, stream_mode="values"):
-        if len(s["messages"]) == 0:
-            continue
+        if len(s["messages"]) > 0:
+            message = s["messages"][-1]
+            if isinstance(message, AIMessage):
+                ai_messages.append("AI Message:\n" + extract_message_content(message.content))
+            elif isinstance(message, ToolMessage):
+                ai_messages.append("Tool Message:\n" + message.content)
+            else:
+                ai_messages.append(message)
 
-        message = s["messages"][-1]
-        if isinstance(message, AIMessage):
-            ai_messages.append(extract_message_content(message.pretty_repr()))
-        else:
-            ai_messages.append(extract_message_content(message))
-
-        # if isinstance(message, tuple):
-        #     print(message)
-        # else:
-        #     message.pretty_print()
-    
     filename = slugify(article["title"])
-    write_to_file(ai_messages, f"results\\{filename}_{config["configurable"]["thread_id"][:6]}.md")
-
-# SEQUENTIAL CHAINS RUN
-# analyze_chain = (PromptTemplate.from_template(open('prompt.txt', 'r').read()) | llm)
-# market_impact_chain = (PromptTemplate(input_variables=['summary'], template='Analyze the potential market impact of the following summary :\n{summary}') | llm)
-# composed_chain = (
-#     {"summary": agent}
-#     | StrOutputParser()
-#     | RunnablePassthrough()
-#     | {"analysis": market_impact_chain}
-#     | StrOutputParser()
-# )
-# for article in fetch_rss_feed('http://www.financemagnates.com/cryptocurrency/feed/'):
-#     print(composed_chain.invoke({"content": article['content']}))
+    write_to_file([x for x in ai_messages if x], f"results\\{filename}_{config["configurable"]["thread_id"][:6]}.md")
